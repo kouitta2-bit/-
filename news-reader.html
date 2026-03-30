@@ -60,6 +60,15 @@
   .cat-title { font-size: 20px; font-weight: 700; }
   .cat-subtitle { font-family: var(--mono); font-size: 11px; color: var(--text3); margin-top: 4px; }
 
+  .cache-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: var(--mono); font-size: 11px; padding: 4px 10px;
+    border-radius: 4px; margin-bottom: 1rem;
+  }
+  .cache-badge.fresh { background: rgba(61,214,140,0.1); color: #3dd68c; }
+  .cache-badge.stale { background: rgba(245,166,35,0.1); color: #f5a623; }
+  .cache-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
   .progress-area { margin-bottom: 1.25rem; }
   .progress-bar-wrap { height: 3px; background: var(--border); border-radius: 2px; margin-bottom: 6px; overflow: hidden; }
   .progress-bar { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.4s ease; }
@@ -125,8 +134,8 @@
 <header>
   <div class="logo">AI<span>::</span>NEWS</div>
   <div class="header-right">
-    <span class="update-info" id="update-info">未取得</span>
-    <button id="refresh-btn" onclick="fetchCurrentCat(true)">↻ 更新</button>
+    <span class="update-info" id="update-info">読み込み中...</span>
+    <button id="refresh-btn" onclick="fetchCurrentCat(true)">↻ 再収集</button>
   </div>
 </header>
 
@@ -147,9 +156,10 @@
       <div class="main-header">
         <div>
           <div class="cat-title" id="cat-title">国内ニュース</div>
-          <div class="cat-subtitle">Claudeが複数回Web検索して50〜100件を収集・要約</div>
+          <div class="cat-subtitle" id="cat-subtitle">キャッシュを確認中...</div>
         </div>
       </div>
+      <div id="cache-badge-area"></div>
       <div id="progress-area" style="display:none" class="progress-area">
         <div class="progress-bar-wrap"><div class="progress-bar" id="progress-bar" style="width:0%"></div></div>
         <div class="progress-label"><span id="progress-text">準備中...</span><span id="progress-pct">0%</span></div>
@@ -165,6 +175,10 @@
 </div>
 
 <script>
+// =============================================
+// 設定
+// =============================================
+const GAS_URL = "https://script.google.com/macros/s/AKfycby-Z6u0vQGCpA17K63lfDjr6UC9U4sf4qiy7axR1ihivK1xg0KtFGS7xj7ejOmIFxRm/exec";
 const PAGE_SIZE = 20;
 
 const CATS = {
@@ -232,16 +246,19 @@ const CATS = {
 
 let apiKey = localStorage.getItem("anthropic_api_key") || "";
 let currentCat = "jp";
-let cache = {};
+let memCache = {};       // メモリキャッシュ（ページ内）
 let filteredItems = [];
 let currentPage = 1;
 let isFetching = false;
 
+// =============================================
+// APIキー設定
+// =============================================
 function showApiSetup() {
   document.getElementById("api-setup-area").innerHTML = `
     <div class="api-setup">
       <h2>Anthropic APIキーを設定</h2>
-      <p>このアプリはClaudeのAPIとWeb検索を使って各カテゴリ50〜75件のニュースを自動収集・要約します。<br>Anthropic APIキーを入力してください。キーはこのブラウザにのみ保存されます。</p>
+      <p>このアプリはClaudeのAPIとWeb検索を使ってニュースを収集します。取得済みデータはGoogleスプレッドシートにキャッシュされるため、6時間以内の再アクセスは即座に表示されます。</p>
       <input type="password" id="key-input" placeholder="sk-ant-..." />
       <button onclick="saveKey()">保存して開始</button>
       <div class="api-note">※ APIキーは <a href="https://console.anthropic.com" target="_blank" style="color:var(--accent)">console.anthropic.com</a> で取得できます</div>
@@ -256,9 +273,36 @@ function saveKey() {
   localStorage.setItem("anthropic_api_key", apiKey);
   document.getElementById("api-setup-area").innerHTML = "";
   document.getElementById("content-area").style.display = "block";
-  fetchCurrentCat(false);
+  init();
 }
 
+// =============================================
+// 初期化：全カテゴリのキャッシュ状態を確認
+// =============================================
+async function init() {
+  document.getElementById("news-output").innerHTML = `<div class="state-box"><div class="spinner"></div><p>キャッシュを確認中...</p></div>`;
+  try {
+    const res = await fetch(GAS_URL + "?action=readAll");
+    const json = await res.json();
+    if (json.ok && json.data) {
+      Object.keys(json.data).forEach(cat => {
+        const d = json.data[cat];
+        if (d.fresh && d.items.length > 0) {
+          memCache[cat] = { items: d.items, updatedAt: d.updatedAt, fresh: true };
+          document.getElementById(`cnt-${cat}`).textContent = d.items.length;
+        }
+      });
+    }
+  } catch(e) {
+    console.warn("Cache read failed:", e.message);
+  }
+  // 現在のカテゴリを表示
+  loadCat(currentCat, false);
+}
+
+// =============================================
+// カテゴリ切り替え
+// =============================================
 function selectCat(btn) {
   if (isFetching) return;
   document.querySelectorAll(".cat-btn").forEach(b => b.classList.remove("active"));
@@ -267,32 +311,53 @@ function selectCat(btn) {
   document.getElementById("cat-title").textContent = CATS[currentCat].label;
   const fi = document.getElementById("filter-input");
   if (fi) fi.value = "";
-  if (cache[currentCat]) {
-    filteredItems = [...cache[currentCat]];
-    currentPage = 1;
-    document.getElementById("filter-bar").style.display = "flex";
-    document.getElementById("filter-count").textContent = filteredItems.length + "件";
-    renderPage();
-  } else {
-    fetchCurrentCat(false);
-  }
+  loadCat(currentCat, false);
 }
 
-async function fetchCurrentCat(forceRefresh) {
-  if (isFetching) return;
-  const cat = currentCat;
-  if (!forceRefresh && cache[cat]) {
-    filteredItems = [...cache[cat]];
+async function loadCat(cat, forceRefresh) {
+  // メモリキャッシュがあればすぐ表示
+  if (!forceRefresh && memCache[cat] && memCache[cat].fresh) {
+    filteredItems = [...memCache[cat].items];
     currentPage = 1;
-    document.getElementById("filter-bar").style.display = "flex";
-    document.getElementById("filter-count").textContent = filteredItems.length + "件";
+    showCacheBadge(true, memCache[cat].updatedAt);
+    showFilterBar();
     renderPage();
     return;
   }
+  // スプレッドシートから読む
+  document.getElementById("cache-badge-area").innerHTML = "";
+  document.getElementById("news-output").innerHTML = `<div class="state-box"><div class="spinner"></div><p>キャッシュを確認中...</p></div>`;
+  try {
+    const res = await fetch(`${GAS_URL}?action=read&cat=${cat}`);
+    const json = await res.json();
+    if (json.ok && json.data.fresh && json.data.items.length > 0) {
+      memCache[cat] = { items: json.data.items, updatedAt: json.data.updatedAt, fresh: true };
+      document.getElementById(`cnt-${cat}`).textContent = json.data.items.length;
+      filteredItems = [...json.data.items];
+      currentPage = 1;
+      showCacheBadge(true, json.data.updatedAt);
+      showFilterBar();
+      renderPage();
+      return;
+    }
+  } catch(e) {
+    console.warn("Sheet read failed:", e.message);
+  }
+  // キャッシュなし → 新規収集
+  fetchCurrentCat(false);
+}
+
+// =============================================
+// ニュース収集（複数バッチ）
+// =============================================
+async function fetchCurrentCat(forceRefresh) {
+  if (isFetching) return;
+  const cat = currentCat;
 
   isFetching = true;
   document.getElementById("refresh-btn").disabled = true;
   document.getElementById("filter-bar").style.display = "none";
+  document.getElementById("cache-badge-area").innerHTML = "";
   document.getElementById("pagination-area").innerHTML = "";
   document.getElementById("progress-area").style.display = "block";
   document.getElementById("news-output").innerHTML = `<div class="state-box"><div class="spinner"></div><p>ニュースを収集中です。しばらくお待ちください...</p></div>`;
@@ -305,11 +370,10 @@ async function fetchCurrentCat(forceRefresh) {
     try {
       const items = await fetchBatch(batches[i]);
       allItems = dedup(allItems.concat(items));
-      cache[cat] = allItems;
-      document.getElementById(`cnt-${cat}`).textContent = allItems.length;
+      // 途中経過を表示
       filteredItems = [...allItems];
-      document.getElementById("filter-bar").style.display = "flex";
-      document.getElementById("filter-count").textContent = filteredItems.length + "件";
+      document.getElementById(`cnt-${cat}`).textContent = allItems.length;
+      showFilterBar();
       renderPage();
     } catch(e) {
       console.warn(`Batch ${i+1} error:`, e.message);
@@ -317,9 +381,18 @@ async function fetchCurrentCat(forceRefresh) {
     if (i < batches.length - 1) await sleep(1400);
   }
 
-  setProgress(batches.length, batches.length, "収集完了");
-  setTimeout(() => { document.getElementById("progress-area").style.display = "none"; }, 1800);
+  // スプレッドシートに保存
+  setProgress(batches.length, batches.length, "スプレッドシートに保存中...");
+  try {
+    await saveToSheet(cat, allItems);
+    const now = new Date().toISOString();
+    memCache[cat] = { items: allItems, updatedAt: now, fresh: true };
+    showCacheBadge(true, now);
+  } catch(e) {
+    console.warn("Sheet write failed:", e.message);
+  }
 
+  setTimeout(() => { document.getElementById("progress-area").style.display = "none"; }, 1500);
   const now = new Date();
   document.getElementById("update-info").textContent = `${now.getHours()}:${String(now.getMinutes()).padStart(2,"0")} 更新`;
   isFetching = false;
@@ -329,7 +402,6 @@ async function fetchCurrentCat(forceRefresh) {
 async function fetchBatch(batchPrompt) {
   const today = new Date().toLocaleDateString("ja-JP", { year:"numeric", month:"long", day:"numeric" });
   const prompt = `${today}現在の${batchPrompt}。
-
 以下のJSON形式のみで返答してください。前置き・説明・マークダウン記法は不要です：
 {"items":[{"title":"記事タイトル（具体的かつ日本語で）","source":"メディア名","summary":"2〜3文の日本語要約","tag":"タグ2〜5文字"}]}`;
 
@@ -360,6 +432,21 @@ async function fetchBatch(batchPrompt) {
   return Array.isArray(parsed.items) ? parsed.items : [];
 }
 
+async function saveToSheet(cat, items) {
+  await fetch(GAS_URL, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain" },
+    body: JSON.stringify({ items }),
+    mode: "no-cors"
+  });
+  // no-corsのため別途GETでも保存
+  const encoded = encodeURIComponent(JSON.stringify(items));
+  // データが大きすぎるためPOSTのみ（no-corsで送信）
+}
+
+// =============================================
+// ユーティリティ
+// =============================================
 function dedup(items) {
   const seen = new Set();
   return items.filter(n => {
@@ -377,9 +464,25 @@ function setProgress(done, total, label) {
   document.getElementById("progress-pct").textContent = pct + "%";
 }
 
+function showCacheBadge(fresh, updatedAt) {
+  const dt = updatedAt ? new Date(updatedAt) : null;
+  const timeStr = dt ? `${dt.getMonth()+1}/${dt.getDate()} ${dt.getHours()}:${String(dt.getMinutes()).padStart(2,"0")}` : "";
+  document.getElementById("cache-badge-area").innerHTML = `
+    <div class="cache-badge ${fresh ? "fresh" : "stale"}">
+      <span class="cache-dot"></span>
+      ${fresh ? `キャッシュ済み · ${timeStr} 取得 · 6時間有効` : "キャッシュ期限切れ"}
+    </div>`;
+  document.getElementById("update-info").textContent = timeStr ? `${timeStr} 更新` : "";
+}
+
+function showFilterBar() {
+  document.getElementById("filter-bar").style.display = "flex";
+  document.getElementById("filter-count").textContent = filteredItems.length + "件";
+}
+
 function applyFilter() {
   const q = (document.getElementById("filter-input").value || "").trim().toLowerCase();
-  const src = cache[currentCat] || [];
+  const src = (memCache[currentCat] || {}).items || [];
   filteredItems = q ? src.filter(n => (n.title+n.summary+n.tag+n.source).toLowerCase().includes(q)) : [...src];
   currentPage = 1;
   document.getElementById("filter-count").textContent = filteredItems.length + "件";
@@ -419,7 +522,6 @@ function renderPage() {
     </div>`;
 
   if (totalPages <= 1) { document.getElementById("pagination-area").innerHTML = ""; return; }
-
   let pages = [];
   for (let p = 1; p <= totalPages; p++) {
     if (p===1 || p===totalPages || Math.abs(p-currentPage)<=2) pages.push(p);
@@ -450,9 +552,12 @@ function askAbout(title) {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+// =============================================
+// 起動
+// =============================================
 if (apiKey) {
   document.getElementById("content-area").style.display = "block";
-  fetchCurrentCat(false);
+  init();
 } else {
   showApiSetup();
 }
