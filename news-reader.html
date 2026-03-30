@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AIニュースリーダー</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0f0f11; --bg2: #17171a; --bg3: #1e1e22;
+    --border: #2a2a2f; --border2: #35353c;
+    --text: #e8e8ec; --text2: #9090a0; --text3: #55555f;
+    --accent: #5b7fff; --accent2: #3a5cff;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'Noto Sans JP', sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--sans); background: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; }
+
+  header {
+    padding: 0 1.5rem; height: 56px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid var(--border); background: var(--bg);
+    position: sticky; top: 0; z-index: 100;
+  }
+  .logo { font-family: var(--mono); font-size: 15px; font-weight: 500; letter-spacing: -0.03em; }
+  .logo span { color: var(--accent); }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .update-info { font-family: var(--mono); font-size: 11px; color: var(--text3); }
+  #refresh-btn {
+    font-family: var(--mono); font-size: 12px; padding: 6px 14px;
+    border: 1px solid var(--border2); border-radius: 6px;
+    background: transparent; color: var(--text2); cursor: pointer; transition: all 0.15s;
+  }
+  #refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+  #refresh-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .layout { display: flex; flex: 1; }
+
+  aside {
+    width: 176px; flex-shrink: 0;
+    border-right: 1px solid var(--border);
+    padding: 1.25rem 0; background: var(--bg);
+    position: sticky; top: 56px; height: calc(100vh - 56px); overflow-y: auto;
+  }
+  .sidebar-label { font-family: var(--mono); font-size: 10px; color: var(--text3); letter-spacing: 0.1em; padding: 0 1.25rem 0.75rem; text-transform: uppercase; }
+  .cat-btn {
+    width: 100%; display: flex; align-items: center; gap: 9px;
+    padding: 10px 1.1rem; background: transparent; border: none;
+    border-left: 2px solid transparent; color: var(--text2);
+    font-family: var(--sans); font-size: 12.5px; cursor: pointer; text-align: left; transition: all 0.12s;
+  }
+  .cat-btn:hover { background: var(--bg3); color: var(--text); }
+  .cat-btn.active { border-left-color: var(--accent); background: rgba(91,127,255,0.07); color: var(--accent); font-weight: 500; }
+  .cat-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .cat-count { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--text3); }
+
+  main { flex: 1; overflow-y: auto; padding: 1.5rem 2rem; min-width: 0; }
+  .main-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 1.25rem; }
+  .cat-title { font-size: 20px; font-weight: 700; }
+  .cat-subtitle { font-family: var(--mono); font-size: 11px; color: var(--text3); margin-top: 4px; }
+
+  .progress-area { margin-bottom: 1.25rem; }
+  .progress-bar-wrap { height: 3px; background: var(--border); border-radius: 2px; margin-bottom: 6px; overflow: hidden; }
+  .progress-bar { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.4s ease; }
+  .progress-label { font-family: var(--mono); font-size: 11px; color: var(--text3); display: flex; justify-content: space-between; }
+
+  .state-box { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 4rem 2rem; gap: 1rem; color: var(--text3); text-align: center; }
+  .spinner { width: 32px; height: 32px; border: 2px solid var(--border2); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .state-box p { font-size: 13px; color: var(--text2); }
+
+  .filter-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 1rem; }
+  .filter-input { flex: 1; padding: 7px 12px; background: var(--bg3); border: 1px solid var(--border2); border-radius: 6px; color: var(--text); font-family: var(--sans); font-size: 13px; outline: none; }
+  .filter-input:focus { border-color: var(--accent); }
+  .filter-input::placeholder { color: var(--text3); }
+  .filter-count { font-family: var(--mono); font-size: 11px; color: var(--text3); white-space: nowrap; }
+
+  .news-list { display: flex; flex-direction: column; }
+  .news-item { display: flex; gap: 1rem; padding: 1.1rem 0; border-bottom: 1px solid var(--border); animation: fadeIn 0.25s ease both; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
+  .news-num { font-family: var(--mono); font-size: 17px; font-weight: 500; color: var(--border2); width: 36px; flex-shrink: 0; padding-top: 2px; text-align: right; }
+  .news-body { flex: 1; min-width: 0; }
+  .news-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; flex-wrap: wrap; }
+  .news-source { font-family: var(--mono); font-size: 10px; color: var(--text3); letter-spacing: 0.04em; text-transform: uppercase; }
+  .news-sep { color: var(--border2); font-size: 10px; }
+  .news-tag { font-family: var(--mono); font-size: 10px; padding: 2px 7px; border-radius: 3px; font-weight: 500; }
+  .news-title { font-size: 14px; font-weight: 700; color: var(--text); line-height: 1.6; margin-bottom: 5px; }
+  .news-summary { font-size: 12px; color: var(--text2); line-height: 1.7; }
+  .ask-btn { display: inline-block; margin-top: 8px; font-family: var(--mono); font-size: 11px; padding: 3px 9px; border: 1px solid var(--border2); border-radius: 4px; background: transparent; color: var(--text3); cursor: pointer; transition: all 0.15s; }
+  .ask-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(91,127,255,0.07); }
+
+  .pagination { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border); flex-wrap: wrap; }
+  .page-btn { font-family: var(--mono); font-size: 12px; padding: 5px 11px; border: 1px solid var(--border2); border-radius: 4px; background: transparent; color: var(--text2); cursor: pointer; transition: all 0.12s; }
+  .page-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .page-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .page-btn:disabled { opacity: 0.3; cursor: default; }
+  .page-info { font-family: var(--mono); font-size: 11px; color: var(--text3); }
+
+  .t-jp     { background: rgba(45,212,191,0.12);  color: #40ddd0; }
+  .t-biz    { background: rgba(91,127,255,0.12);  color: #7fa0ff; }
+  .t-world  { background: rgba(255,95,95,0.12);   color: #ff8080; }
+  .t-tech   { background: rgba(61,214,140,0.12);  color: #4de89e; }
+  .t-market { background: rgba(245,166,35,0.12);  color: #f5b94a; }
+  .t-re     { background: rgba(176,111,255,0.12); color: #c490ff; }
+
+  .api-setup { max-width: 480px; margin: 3rem auto; background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 2rem; }
+  .api-setup h2 { font-size: 16px; font-weight: 700; margin-bottom: 0.5rem; }
+  .api-setup p { font-size: 13px; color: var(--text2); line-height: 1.7; margin-bottom: 1.25rem; }
+  .api-setup input { width: 100%; padding: 10px 14px; background: var(--bg3); border: 1px solid var(--border2); border-radius: 6px; color: var(--text); font-family: var(--mono); font-size: 13px; margin-bottom: 10px; outline: none; }
+  .api-setup input:focus { border-color: var(--accent); }
+  .api-setup button { width: 100%; padding: 10px; background: var(--accent); border: none; border-radius: 6px; color: #fff; font-family: var(--sans); font-size: 14px; font-weight: 700; cursor: pointer; }
+  .api-setup button:hover { background: var(--accent2); }
+  .api-note { font-family: var(--mono); font-size: 11px; color: var(--text3); margin-top: 10px; line-height: 1.6; }
+
+  @media (max-width: 680px) {
+    aside { width: 130px; }
+    main { padding: 1rem; }
+    .cat-btn { font-size: 11.5px; padding: 9px 0.8rem; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">AI<span>::</span>NEWS</div>
+  <div class="header-right">
+    <span class="update-info" id="update-info">未取得</span>
+    <button id="refresh-btn" onclick="fetchCurrentCat(true)">↻ 更新</button>
+  </div>
+</header>
+
+<div class="layout">
+  <aside>
+    <div class="sidebar-label">カテゴリ</div>
+    <button class="cat-btn active" data-cat="jp"     onclick="selectCat(this)"><span class="cat-dot" style="background:#2dd4bf"></span>国内ニュース<span class="cat-count" id="cnt-jp"></span></button>
+    <button class="cat-btn"        data-cat="biz"    onclick="selectCat(this)"><span class="cat-dot" style="background:#5b7fff"></span>ビジネス<span class="cat-count" id="cnt-biz"></span></button>
+    <button class="cat-btn"        data-cat="world"  onclick="selectCat(this)"><span class="cat-dot" style="background:#ff5f5f"></span>国際・政治<span class="cat-count" id="cnt-world"></span></button>
+    <button class="cat-btn"        data-cat="tech"   onclick="selectCat(this)"><span class="cat-dot" style="background:#3dd68c"></span>テクノロジー<span class="cat-count" id="cnt-tech"></span></button>
+    <button class="cat-btn"        data-cat="market" onclick="selectCat(this)"><span class="cat-dot" style="background:#f5a623"></span>マーケット<span class="cat-count" id="cnt-market"></span></button>
+    <button class="cat-btn"        data-cat="re"     onclick="selectCat(this)"><span class="cat-dot" style="background:#b06fff"></span>不動産・建築<span class="cat-count" id="cnt-re"></span></button>
+  </aside>
+
+  <main id="main">
+    <div id="api-setup-area"></div>
+    <div id="content-area" style="display:none">
+      <div class="main-header">
+        <div>
+          <div class="cat-title" id="cat-title">国内ニュース</div>
+          <div class="cat-subtitle">Claudeが複数回Web検索して50〜100件を収集・要約</div>
+        </div>
+      </div>
+      <div id="progress-area" style="display:none" class="progress-area">
+        <div class="progress-bar-wrap"><div class="progress-bar" id="progress-bar" style="width:0%"></div></div>
+        <div class="progress-label"><span id="progress-text">準備中...</span><span id="progress-pct">0%</span></div>
+      </div>
+      <div class="filter-bar" id="filter-bar" style="display:none">
+        <input class="filter-input" id="filter-input" type="text" placeholder="キーワードで絞り込む..." oninput="applyFilter()">
+        <span class="filter-count" id="filter-count"></span>
+      </div>
+      <div id="news-output"></div>
+      <div id="pagination-area"></div>
+    </div>
+  </main>
+</div>
+
+<script>
+const PAGE_SIZE = 20;
+
+const CATS = {
+  jp: {
+    label: "国内ニュース", tagClass: "t-jp",
+    batches: [
+      "今日の日本の政治・国会・選挙・行政の主要ニュース15件（与野党動向、法案、政策発表など）",
+      "今日の日本の社会・事件・事故・災害・気象の主要ニュース15件",
+      "今日の日本の経済・産業・企業・雇用・物価の主要ニュース15件",
+      "今日の日本のスポーツ・文化・芸能・エンタメの主要ニュース15件",
+      "今日の日本の医療・科学・教育・環境・地域の主要ニュース10件",
+    ]
+  },
+  biz: {
+    label: "ビジネス・経済", tagClass: "t-biz",
+    batches: [
+      "今日の日本企業の経営・M&A・決算・上場ニュース15件",
+      "今日の日本のスタートアップ・ベンチャー・新サービス・新製品ニュース15件",
+      "今日の日本の雇用・労働・賃金・働き方・人材ニュース15件",
+      "今日の世界の主要グローバル企業・ビジネスニュース15件",
+      "今日の日本の流通・小売・消費・インバウンドニュース10件",
+    ]
+  },
+  world: {
+    label: "国際・政治", tagClass: "t-world",
+    batches: [
+      "今日の米国・カナダ・中南米の政治・外交・社会ニュース15件",
+      "今日の欧州の政治・EU・紛争・社会ニュース15件",
+      "今日の中東・アフリカの紛争・政治・外交ニュース15件",
+      "今日のアジア・太平洋の政治・外交ニュース15件（中国・韓国・ASEAN・インドなど）",
+      "今日の日本の外交・安全保障・国際協力ニュース10件",
+    ]
+  },
+  tech: {
+    label: "テクノロジー・AI", tagClass: "t-tech",
+    batches: [
+      "今日のAI・生成AI・大規模言語モデルの最新ニュース15件（新モデル・研究・企業動向）",
+      "今日のスマートフォン・PC・ウェアラブル・ハードウェアニュース15件",
+      "今日のソフトウェア・アプリ・SaaS・クラウド・プラットフォームニュース15件",
+      "今日の半導体・通信・5G・6G・量子コンピュータニュース15件",
+      "今日のサイバーセキュリティ・プライバシー・規制・宇宙開発ニュース10件",
+    ]
+  },
+  market: {
+    label: "マーケット・株式", tagClass: "t-market",
+    batches: [
+      "今日の日本株式市場ニュース15件（日経平均・TOPIX・個別銘柄・IPO）",
+      "今日の米国・欧州株式市場ニュース15件（NYダウ・ナスダック・S&P500）",
+      "今日の為替・金利・債券市場ニュース15件（ドル円・ユーロ・日米欧金利）",
+      "今日の原油・金・資源・商品市場ニュース15件",
+      "今日の暗号資産・中央銀行・金融政策・経済指標ニュース10件",
+    ]
+  },
+  re: {
+    label: "不動産・建築", tagClass: "t-re",
+    batches: [
+      "今日の東京・首都圏のマンション・住宅・地価ニュース15件",
+      "今日の地方・郊外の不動産・移住・土地開発ニュース15件",
+      "今日の商業不動産・オフィス・ホテル・物流施設ニュース15件",
+      "今日の都市再開発・インフラ・建設・ゼネコン・建築ニュース15件",
+      "今日のREIT・不動産投資・住宅ローン・建築法規ニュース10件",
+    ]
+  }
+};
+
+let apiKey = localStorage.getItem("anthropic_api_key") || "";
+let currentCat = "jp";
+let cache = {};
+let filteredItems = [];
+let currentPage = 1;
+let isFetching = false;
+
+function showApiSetup() {
+  document.getElementById("api-setup-area").innerHTML = `
+    <div class="api-setup">
+      <h2>Anthropic APIキーを設定</h2>
+      <p>このアプリはClaudeのAPIとWeb検索を使って各カテゴリ50〜75件のニュースを自動収集・要約します。<br>Anthropic APIキーを入力してください。キーはこのブラウザにのみ保存されます。</p>
+      <input type="password" id="key-input" placeholder="sk-ant-..." />
+      <button onclick="saveKey()">保存して開始</button>
+      <div class="api-note">※ APIキーは <a href="https://console.anthropic.com" target="_blank" style="color:var(--accent)">console.anthropic.com</a> で取得できます</div>
+    </div>`;
+  document.getElementById("content-area").style.display = "none";
+}
+
+function saveKey() {
+  const val = document.getElementById("key-input").value.trim();
+  if (!val.startsWith("sk-ant-")) { alert("正しいAPIキーを入力してください（sk-ant- で始まるもの）"); return; }
+  apiKey = val;
+  localStorage.setItem("anthropic_api_key", apiKey);
+  document.getElementById("api-setup-area").innerHTML = "";
+  document.getElementById("content-area").style.display = "block";
+  fetchCurrentCat(false);
+}
+
+function selectCat(btn) {
+  if (isFetching) return;
+  document.querySelectorAll(".cat-btn").forEach(b => b.classList.remove("active"));
+  btn.classList.add("active");
+  currentCat = btn.dataset.cat;
+  document.getElementById("cat-title").textContent = CATS[currentCat].label;
+  const fi = document.getElementById("filter-input");
+  if (fi) fi.value = "";
+  if (cache[currentCat]) {
+    filteredItems = [...cache[currentCat]];
+    currentPage = 1;
+    document.getElementById("filter-bar").style.display = "flex";
+    document.getElementById("filter-count").textContent = filteredItems.length + "件";
+    renderPage();
+  } else {
+    fetchCurrentCat(false);
+  }
+}
+
+async function fetchCurrentCat(forceRefresh) {
+  if (isFetching) return;
+  const cat = currentCat;
+  if (!forceRefresh && cache[cat]) {
+    filteredItems = [...cache[cat]];
+    currentPage = 1;
+    document.getElementById("filter-bar").style.display = "flex";
+    document.getElementById("filter-count").textContent = filteredItems.length + "件";
+    renderPage();
+    return;
+  }
+
+  isFetching = true;
+  document.getElementById("refresh-btn").disabled = true;
+  document.getElementById("filter-bar").style.display = "none";
+  document.getElementById("pagination-area").innerHTML = "";
+  document.getElementById("progress-area").style.display = "block";
+  document.getElementById("news-output").innerHTML = `<div class="state-box"><div class="spinner"></div><p>ニュースを収集中です。しばらくお待ちください...</p></div>`;
+
+  const batches = CATS[cat].batches;
+  let allItems = [];
+
+  for (let i = 0; i < batches.length; i++) {
+    setProgress(i, batches.length, `バッチ ${i+1}/${batches.length} を検索中...`);
+    try {
+      const items = await fetchBatch(batches[i]);
+      allItems = dedup(allItems.concat(items));
+      cache[cat] = allItems;
+      document.getElementById(`cnt-${cat}`).textContent = allItems.length;
+      filteredItems = [...allItems];
+      document.getElementById("filter-bar").style.display = "flex";
+      document.getElementById("filter-count").textContent = filteredItems.length + "件";
+      renderPage();
+    } catch(e) {
+      console.warn(`Batch ${i+1} error:`, e.message);
+    }
+    if (i < batches.length - 1) await sleep(1400);
+  }
+
+  setProgress(batches.length, batches.length, "収集完了");
+  setTimeout(() => { document.getElementById("progress-area").style.display = "none"; }, 1800);
+
+  const now = new Date();
+  document.getElementById("update-info").textContent = `${now.getHours()}:${String(now.getMinutes()).padStart(2,"0")} 更新`;
+  isFetching = false;
+  document.getElementById("refresh-btn").disabled = false;
+}
+
+async function fetchBatch(batchPrompt) {
+  const today = new Date().toLocaleDateString("ja-JP", { year:"numeric", month:"long", day:"numeric" });
+  const prompt = `${today}現在の${batchPrompt}。
+
+以下のJSON形式のみで返答してください。前置き・説明・マークダウン記法は不要です：
+{"items":[{"title":"記事タイトル（具体的かつ日本語で）","source":"メディア名","summary":"2〜3文の日本語要約","tag":"タグ2〜5文字"}]}`;
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true"
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 4000,
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
+      messages: [{ role: "user", content: prompt }]
+    })
+  });
+
+  if (!res.ok) { const e = await res.json(); throw new Error(e.error?.message || res.statusText); }
+  const data = await res.json();
+  const textBlock = data.content.find(b => b.type === "text");
+  if (!textBlock) return [];
+  const raw = textBlock.text.replace(/```json|```/g, "").trim();
+  const m = raw.match(/\{[\s\S]*\}/);
+  if (!m) return [];
+  const parsed = JSON.parse(m[0]);
+  return Array.isArray(parsed.items) ? parsed.items : [];
+}
+
+function dedup(items) {
+  const seen = new Set();
+  return items.filter(n => {
+    const key = n.title.replace(/\s/g,"").slice(0,18);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function setProgress(done, total, label) {
+  const pct = Math.round((done / total) * 100);
+  document.getElementById("progress-bar").style.width = pct + "%";
+  document.getElementById("progress-text").textContent = label;
+  document.getElementById("progress-pct").textContent = pct + "%";
+}
+
+function applyFilter() {
+  const q = (document.getElementById("filter-input").value || "").trim().toLowerCase();
+  const src = cache[currentCat] || [];
+  filteredItems = q ? src.filter(n => (n.title+n.summary+n.tag+n.source).toLowerCase().includes(q)) : [...src];
+  currentPage = 1;
+  document.getElementById("filter-count").textContent = filteredItems.length + "件";
+  renderPage();
+}
+
+function renderPage() {
+  const tagClass = CATS[currentCat].tagClass;
+  const total = filteredItems.length;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if (currentPage > totalPages) currentPage = totalPages;
+  const start = (currentPage - 1) * PAGE_SIZE;
+  const slice = filteredItems.slice(start, start + PAGE_SIZE);
+
+  if (total === 0) {
+    document.getElementById("news-output").innerHTML = `<div class="state-box"><p>該当する記事が見つかりませんでした</p></div>`;
+    document.getElementById("pagination-area").innerHTML = "";
+    return;
+  }
+
+  document.getElementById("news-output").innerHTML = `
+    <div class="news-list">
+      ${slice.map((n, i) => `
+        <div class="news-item" style="animation-delay:${i*0.025}s">
+          <div class="news-num">${String(start+i+1).padStart(2,"0")}</div>
+          <div class="news-body">
+            <div class="news-meta">
+              <span class="news-source">${n.source||"—"}</span>
+              <span class="news-sep">·</span>
+              <span class="news-tag ${tagClass}">${n.tag||""}</span>
+            </div>
+            <div class="news-title">${n.title}</div>
+            <div class="news-summary">${n.summary}</div>
+            <button class="ask-btn" onclick="askAbout(${JSON.stringify(n.title)})">詳しく調べる →</button>
+          </div>
+        </div>`).join("")}
+    </div>`;
+
+  if (totalPages <= 1) { document.getElementById("pagination-area").innerHTML = ""; return; }
+
+  let pages = [];
+  for (let p = 1; p <= totalPages; p++) {
+    if (p===1 || p===totalPages || Math.abs(p-currentPage)<=2) pages.push(p);
+    else if (pages[pages.length-1] !== "…") pages.push("…");
+  }
+  document.getElementById("pagination-area").innerHTML = `
+    <div class="pagination">
+      <button class="page-btn" onclick="goPage(${currentPage-1})" ${currentPage===1?"disabled":""}>← 前</button>
+      ${pages.map(p => p==="…"
+        ? `<span class="page-info">…</span>`
+        : `<button class="page-btn ${p===currentPage?"active":""}" onclick="goPage(${p})">${p}</button>`
+      ).join("")}
+      <button class="page-btn" onclick="goPage(${currentPage+1})" ${currentPage===totalPages?"disabled":""}>次 →</button>
+    </div>`;
+}
+
+function goPage(p) {
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / PAGE_SIZE));
+  if (p < 1 || p > totalPages) return;
+  currentPage = p;
+  renderPage();
+  document.getElementById("main").scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function askAbout(title) {
+  window.open(`https://claude.ai/new?q=${encodeURIComponent(title + " について詳しく教えてください")}`, "_blank");
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+if (apiKey) {
+  document.getElementById("content-area").style.display = "block";
+  fetchCurrentCat(false);
+} else {
+  showApiSetup();
+}
+</script>
+</body>
+</html>
